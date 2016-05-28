@@ -1,0 +1,86 @@
+C++ Template TRIE Container
+===========================
+
+
+Disclaimer
+----------
+
+*This is work in progress.*
+
+The library much far from being usable (but stay tuned ;-)
+
+
+Overview
+--------
+
+TRIE is an associative key->value container allowing for insert and search
+operations with constant complexity regarding the amount of items.
+The operations have linear complexity with respect to key length, instead.
+See https://en.wikipedia.org/wiki/Trie
+
+
+Key features
+------------
+
+* Condensed branches
+
+
+Build and installation
+----------------------
+
+You need C\++ compiler with support for C++11.
+Recent enough gcc (4.9) or newer is OK.
+You also need make and GNU autotools (automake and autoconf) and libtool.
+
+On Debian-based systems, the following shoud get the above:
+----
+# apt-get install g++ make automake autoconf libtool git
+----
+
+Clone the project:
+----
+$ git clone https://github.com/vencik/libtrie++.git
+----
+
+Build and install:
+----
+$ cd libtrie++
+$ ./build.sh
+# make install
+----
+
+You may specify your installation prefix using
+----
+$ ./build.sh --prefix <your installation prefix>
+----
+
+The build script runs autogen.sh to create the build environment
+(including creation of configure script).
+Then passes all its parameters to configure script and if configuration
+is succesfull, runs make.
+
+You may get more help on the build configuration by issuing
+----
+$ ./autogen.sh
+$ ./configure --help
+----
+
+Once the configure script is created, you don't need to run build.sh
+nor autogen.sh any more; just the obligatory
+----
+$ ./configure
+$ make
+# make install
+----
+
+
+License
+-------
+
+The software is available opensource under the terms of 3-clause BSD license.
+
+
+Author
+------
+
+Vaclav Krpec  <vencik@razdva.cz>
