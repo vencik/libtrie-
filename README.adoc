@@ -39,12 +39,12 @@ On Debian-based systems, the following shoud get the above:
 
 Clone the project:
 ----
-$ git clone https://github.com/vencik/libtrie++.git
+$ git clone https://github.com/vencik/libtriexx.git
 ----
 
 Build and install:
 ----
-$ cd libtrie++
+$ cd libtriexx
 $ ./build.sh
 # make install
 ----
