@@ -192,7 +192,7 @@ class trie {
      *  \param  key   Key
      *  \param  len   Key length
      *  \param  nod   Current node
-     *  \param  qlen  Quad-bit position of key missmatch
+     *  \param  qlen  Quad-bit position of key mismatch
      *
      *  \return Node (or \c NULL)
      */
@@ -240,25 +240,24 @@ class trie {
                     // 1/2 byte (i.e. amid a byte).
                     if (qlen && ((nod->key[i] ^ byte) >> 4))
                         return (const_cast<trie *>(this)->*miss)(
-                            key, len, const_cast<node *>(nod->parent),
-                            (i << 1) - qlen);
+                            key, len, const_cast<node *>(nod->parent), i << 1);
 
                     return (const_cast<trie *>(this)->*miss)(
-                        key, len, const_cast<node *>(nod), i << 1);
+                        key, len, const_cast<node *>(nod), (i << 1) + qlen);
                 }
 
                 forward_branch = qlen > 0;  // branch 1/2 a byte ahead
                 qlen = nod->qlen - (i << 1);
             }
 
-            unsigned char missmatch = nod->key[i] ^ byte;
-            if (missmatch) {
+            unsigned char mismatch = nod->key[i] ^ byte;
+            if (mismatch) {
                 const node * parent = nod->parent;
                 if (forward_branch) parent = parent->parent;
 
                 return (const_cast<trie *>(this)->*miss)(
                     key, len, const_cast<node *>(parent),
-                    (i << 1) + !!(missmatch & 0x0f));
+                    (i << 1) + !(mismatch & 0xf0));
             }
 
             qlen -= 2;
@@ -291,7 +290,7 @@ class trie {
      *  \param  key   Key
      *  \param  len   Key length
      *  \param  nod   Current node
-     *  \param  qlen  Quad-bit position of key missmatch
+     *  \param  qlen  Quad-bit position of key mismatch
      *
      *  \return Node for the key specified
      */
@@ -335,7 +334,7 @@ class trie {
      *  \param  key   Key
      *  \param  len   Key length
      *  \param  nod   Current node
-     *  \param  qlen  Quad-bit position of key missmatch
+     *  \param  qlen  Quad-bit position of key mismatch
      *
      *  \return Node for the key specified
      */

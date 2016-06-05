@@ -3,12 +3,14 @@
 import sys
 
 
+##
+#  \brief  Produce quad-bit string
+#
+#  \param  str  string
+#
+#  \return Quad-bit string
+#
 def str2qbit_str(str):
-    """
-    Produce quad-bit string
-    :param str: string
-    :return: Quad-bit string
-    """
     qbit = map(lambda c: [ord(c) >> 4, ord(c) & 0xf], str)
 
     qstr = []
@@ -18,15 +20,18 @@ def str2qbit_str(str):
     return qstr
 
 
+##
+#  \brief  Build TRIE paths from list of (qkey, value) tuples
+#
+#  \param  qkey_vals  List of (qkey, value) tuples
+#  \param  index      Current key index
+#  \param  begin      Begin index of (qkey, value) tuple
+#  \param  end        End index (one index too far)
+#  \param  node       Default node indication
+#
+#  \return TRIE path list
+#
 def _build_paths(qkey_vals, index, begin, end, node):
-    """
-    Builds TRIE paths from list of (qkey, value) tuples
-    :param qkey_vals: List of (qkey, value) tuples
-    :param index: Current key index
-    :param begin: Begin index of (qkey, value) tuple
-    :param end: End index (one index too far)
-    :param node: Default node indication
-    """
     paths = []
 
     # Keys are sorted, empty must be the 1st one if any
@@ -60,19 +65,21 @@ def _build_paths(qkey_vals, index, begin, end, node):
     return paths
 
 
+## See _build_paths
 def build_paths(qkey_vals):
-    """See _build_paths"""
     if len(qkey_vals) == 0: return ["[]"]
 
     return _build_paths(qkey_vals, 0, 0, len(qkey_vals), "[]")  # show root node
 
 
+##
+#  \brief  Provide TRIE paths for list of (key, value) tuples
+#
+#  \param  key_vals  (key, value) tuples
+#
+#  \return List of TRIE (quad-bit) paths
+#
 def key_vals2paths(key_vals):
-    """
-    Provides TREE paths for list of (key, value) tuples
-    :param key_vals: (key, value) tuples
-    :return: List of TREE (quad-bit) paths
-    """
     # Sort by keys lexicographically
     sorted_key_vals = sorted(key_vals, cmp, lambda k_v: k_v[0])
 
@@ -84,15 +91,26 @@ def key_vals2paths(key_vals):
     return build_paths(qbit_key_vals)
 
 
+##
+#  \brief  Provide TRIE paths for list of keys
+#
+#  Uses key index as value.
+#
+#  \param  keys  Key strings
+#
+#  \return List of TRIE (quad-bit) paths
+#
+def keys2paths(keys):
+    return key_vals2paths(map(lambda no_line: (no_line[1], no_line[0]),
+        enumerate(keys)))
+
+
 #
 # Main
 #
 
 if __name__ == "__main__":
-    key_vals = map(lambda no_line: (no_line[1], no_line[0]),
-        enumerate(sys.stdin.read().splitlines()))
-
-    paths = key_vals2paths(key_vals)
+    paths = keys2paths(sys.stdin.read().splitlines())
 
     for path in paths:
-        print path
+        print(path)

@@ -83,7 +83,6 @@ static void print_trie(
 
     out << "TRIE paths dump:" << std::endl;
     trie.serialise_paths(out);
-    out << std::endl;
 }
 
 
