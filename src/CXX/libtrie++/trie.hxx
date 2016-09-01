@@ -184,6 +184,35 @@ class trie {
 
     node m_root;   /**< Root node */
 
+    public:
+
+    /**
+     *  \brief  (Mis)match position specification
+     *
+     *  Entries:
+     *  @0: TRIE node pointer
+     *  @1: Matching key quad-bit length
+     *  @2: End-of-path flag (\c true means complete key match)
+     */
+    typedef std::tuple<node *, size_t, bool> position_t;
+
+    /** Position node (pointer) getter */
+    inline static node * pos_node(const position_t & pos) {
+        return std::get<0>(pos);
+    }
+
+    /** Position key quad-bit length getter */
+    inline static size_t pos_qlen(const position_t & pos) {
+        return std::get<1>(pos);
+    }
+
+    /** Position end-of-path (complete key match) flag getter */
+    inline static bool pos_match(const position_t & pos) {
+        return std::get<2>(pos);
+    }
+
+    private:
+
     /**
      *  \brief  Tracing miss action prototype
      *
@@ -194,9 +223,9 @@ class trie {
      *  \param  nod   Current node
      *  \param  qlen  Quad-bit position of key mismatch
      *
-     *  \return Node (or \c NULL)
+     *  \return Position of the (original) mismatch
      */
-    typedef node * (trie::* trace_miss_t)(
+    typedef position_t (trie::* trace_miss_t)(
         const unsigned char * key,
         size_t                len,
         node *                nod,
@@ -214,9 +243,9 @@ class trie {
      *  \param  key   Item key
      *  \param  len   Item key length
      *
-     *  \return TRIE node where the mismatch occurs
+     *  \return Position of the (original) mismatch
      */
-    node * trace(
+    position_t trace(
         trace_miss_t          miss,
         const unsigned char * key,
         size_t                len)
@@ -263,8 +292,10 @@ class trie {
             qlen -= 2;
         }
 
+        // Match
         if (0 == qlen)
-            return const_cast<node *>(nod);  // nod is at path end
+            return position_t(
+                const_cast<node *>(nod), len << 1, m_items.end() != nod->item);
 
         // Amid a branch
         return (const_cast<trie *>(this)->*miss)(
@@ -292,9 +323,9 @@ class trie {
      *  \param  nod   Current node
      *  \param  qlen  Quad-bit position of key mismatch
      *
-     *  \return Node for the key specified
+     *  \return Position of inserted item
      */
-    node * insert_node(
+    position_t insert_node(
         const unsigned char * key,
         size_t                len,
         node *                nod,
@@ -313,7 +344,7 @@ class trie {
             br_node->parent = in_node;
 
             // Interim node shall carry item
-            if (qlen == (len << 1)) return in_node;
+            if (qlen == (len << 1)) return position_t(in_node, qlen, false);
 
             br_ix = get_qpos(key, qlen);
             nod   = in_node;
@@ -323,28 +354,30 @@ class trie {
         // Note that the key SHAN'T be set, here.
         // The reason is that it may not (and probably won't) reside
         // at the same address after the item is inserted into the item list.
-        br_node = new node(m_items.end(), NULL, len << 1, nod);
+        qlen = len << 1;
+        br_node = new node(m_items.end(), NULL, qlen, nod);
         nod->branches[br_ix].reset(br_node);
-        return br_node;
+        return position_t(br_node, qlen, false);
     }
 
     /**
-     *  \brief  Report key search miss
+     *  \brief  Report key search position
      *
      *  \param  key   Key
      *  \param  len   Key length
      *  \param  nod   Current node
-     *  \param  qlen  Quad-bit position of key mismatch
+     *  \param  qlen  Quad-bit position of key (mis)match
      *
      *  \return Node for the key specified
      */
-    node * search_miss(
+    position_t search_position(
         const unsigned char * key,
         size_t                len,
         node *                nod,
         size_t                qlen)
     {
-        return NULL;
+        // Hit is reported directly by trace
+        return position_t(nod, qlen, false);
     }
 
     /** Iterator base */
@@ -683,10 +716,11 @@ class trie {
      *  \return Item iterator
      */
     iterator insert(const T & item) {
-        node * nod = trace(&trie::insert_node, key(item), key_len(item));
+        position_t pos = trace(&trie::insert_node, key(item), key_len(item));
+        node *     nod = pos_node(pos);
 
         // Another item may already use the key
-        if (m_items.end() == nod->item) {
+        if (!pos_match(pos)) {
             m_items.push_back(item);
             nod->key  = key(m_items.back());
             nod->item = --m_items.end();
@@ -704,15 +738,12 @@ class trie {
      *  \return Item iterator
      */
     const_iterator find(const unsigned char * key, size_t len) const {
-        node * nod = trace(&trie::search_miss, key, len);
+        position_t pos = trace(&trie::search_position, key, len);
 
-        // No node that represents the key
-        if (NULL == nod) return end();
+        // Key mismatch
+        if (!pos_match(pos)) return end();
 
-        // Interim node (no item)
-        if (m_items.end() == nod->item) return end();
-
-        return const_iterator(*this, nod);
+        return const_iterator(*this, pos_node(pos));
     }
 
     /**
@@ -724,6 +755,45 @@ class trie {
      */
     inline const_iterator find(const T & item) const {
         return find(key(item), key_len(item));
+    }
+
+    /**
+     *  \brief  Transform position to iterator
+     *
+     *  \param  pos  Position
+     *
+     *  \return Iterator (end iterator if there's no item at position)
+     */
+    iterator pos2iterator(const position_t & pos) const {
+        if (!pos_match(pos)) return end();
+
+        return iterator(*this, pos_node(pos));
+    }
+
+    /**
+     *  \brief  Lower bound
+     *
+     *  \param  key  Item key
+     *  \param  len  Item key length
+     *
+     *  \return Lower bound position
+     */
+    inline position_t lower_bound(const unsigned char * key, size_t len) const {
+        return trace(&trie::search_position, key, len);
+    }
+
+    /**
+     *  \brief  Insert item at lower bound
+     *
+     *  \param  item  Item
+     *
+     *  \return Item iterator
+     */
+    iterator insert(const T & item, const position_t & pos) {
+        position_t item_pos = insert_node(
+            key(item), key_len(item), pos_node(pos), pos_qlen(pos));
+
+        return iterator(*this, pos_node(item_pos));
     }
 
 };  // end of template class trie
