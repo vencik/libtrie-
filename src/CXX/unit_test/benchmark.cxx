@@ -194,6 +194,7 @@ static void result(
  *  \param  key_min        Key minimal length
  *  \param  key_max        Key maximal length
  *  \param  misses_per100  Key search miss percentage (random key used)
+ *  \param  lbi_per100     Inserts to lower bound percentage (random key used)
  *
  *  \return Error count
  */
@@ -204,7 +205,8 @@ static int string_trie_benchmark(
     size_t prefix_max,
     size_t key_min,
     size_t key_max,
-    int    misses_per100)
+    int    misses_per100,
+    int    lbi_per100)
 {
     int error_cnt = 0;
 
@@ -245,9 +247,19 @@ static int string_trie_benchmark(
         const std::string key = generate_key(key_min, key_max);
         keys.push_back(key);
 
-        trie_time -= timestamp();
-        trie.insert(std::make_tuple(key, (int)i));
-        trie_time += timestamp();
+        if (rand_int(0, 99) < lbi_per100) {
+            trie_time -= timestamp();
+            auto lb = trie.lower_bound(
+                (const unsigned char *)key.data(), key.size());
+            if (!container::string_trie<int>::pos_match(lb))
+                trie.insert(std::make_tuple(key, (int)i), lb);
+            trie_time += timestamp();
+        }
+        else {
+            trie_time -= timestamp();
+            trie.insert(std::make_tuple(key, (int)i));
+            trie_time += timestamp();
+        }
 
         map_time -= timestamp();
         map.emplace(key, i);
@@ -299,12 +311,13 @@ static int main_impl(int argc, char * const argv[]) {
     size_t key_min       = 12;
     size_t key_max       = 256;
     int    misses_per100 = 15;
+    int    lbi_per100    = 25;
 
     // Usage
     auto usage = [&argv,
         n, prefix_cnt, prefix_min, prefix_max,
         key_min, key_max,
-        misses_per100]()
+        misses_per100, lbi_per100]()
     { std::cerr <<
 "Usage: " << argv[0] << " [OPTIONS]\n\n"
 "OPTIONS:\n"
@@ -325,6 +338,8 @@ static int main_impl(int argc, char * const argv[]) {
 "                               default: " << key_max << "\n"
 "    -m, --misses-per100  <%>   Find key misses (in %)\n"
 "                               default: " << misses_per100 << "\n"
+"    -l, --lbi-per100     <%>   Lower bound inserts (in %)\n"
+"                               default: " << lbi_per100 << "\n"
 "\n"; };
 
     // Options
@@ -340,6 +355,7 @@ static int main_impl(int argc, char * const argv[]) {
         { "key-min",        required_argument, NULL, 'k' },
         { "key-max",        required_argument, NULL, 'K' },
         { "misses-per100",  required_argument, NULL, 'm' },
+        { "lbi-per100",     required_argument, NULL, 'l' },
 
         //{ "", required|no_argument, NULL, '' },
 
@@ -349,7 +365,7 @@ static int main_impl(int argc, char * const argv[]) {
     for (;;) {
         int long_opt_ix;
         int opt = getopt_long(argc, argv,
-            ":hs:n:c:p:P:k:K:m:",
+            ":hs:n:c:p:P:k:K:m:l:",
             long_opts, &long_opt_ix);
 
         if (-1 == opt) break;  // no more options
@@ -393,6 +409,10 @@ static int main_impl(int argc, char * const argv[]) {
                 misses_per100 = ::atoi(optarg);
                 break;
 
+            case 'l':  // inserts to lower bound [%]
+                lbi_per100 = ::atoi(optarg);
+                break;
+
             case '?':  // unknown option
             case ':':  // missing argument
                 usage();
@@ -414,7 +434,7 @@ static int main_impl(int argc, char * const argv[]) {
     exit_code = string_trie_benchmark(n,
         prefix_cnt, prefix_min, prefix_max,
         key_min, key_max,
-        misses_per100);
+        misses_per100, lbi_per100);
 
     std::cerr
         << "Exit code: " << exit_code

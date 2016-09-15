@@ -361,6 +361,21 @@ class trie {
     }
 
     /**
+     *  \brief  Insert new item at \c nod position
+     *
+     *  Note that the function DOES NOT check if there's already
+     *  an item set in the node.
+     *
+     *  \param  item  Item
+     *  \param  nod   TRIE node
+     */
+    void insert_item(const T & item, node * nod) {
+        m_items.push_back(item);
+        nod->key  = key(m_items.back());
+        nod->item = --m_items.end();
+    }
+
+    /**
      *  \brief  Report key search position
      *
      *  \param  key   Key
@@ -720,11 +735,7 @@ class trie {
         node *     nod = pos_node(pos);
 
         // Another item may already use the key
-        if (!pos_match(pos)) {
-            m_items.push_back(item);
-            nod->key  = key(m_items.back());
-            nod->item = --m_items.end();
-        }
+        if (!pos_match(pos)) insert_item(item, nod);
 
         return iterator(*this, nod);
     }
@@ -790,10 +801,14 @@ class trie {
      *  \return Item iterator
      */
     iterator insert(const T & item, const position_t & pos) {
-        position_t item_pos = insert_node(
-            key(item), key_len(item), pos_node(pos), pos_qlen(pos));
+        node * nod  = pos_node(pos);
+        size_t qlen = pos_qlen(pos);
 
-        return iterator(*this, pos_node(item_pos));
+        position_t item_pos = insert_node(key(item), key_len(item), nod, qlen);
+        nod = pos_node(item_pos);
+        insert_item(item, nod);
+
+        return iterator(*this, nod);
     }
 
 };  // end of template class trie
