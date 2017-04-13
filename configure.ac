@@ -129,6 +129,11 @@ AM_COND_IF([ENABLE_DOC], [
 ])
 AM_CONDITIONAL([ENABLE_DOC_PUB], [test x$enable_doc_pub = xtrue])
 
+# Python v3 is used by (some) unit tests
+AC_PATH_PROG([PYTHON3], [python3], [])
+test -n "${PYTHON3}" || AC_MSG_WARN([python3 not found; some unit tests will be disabled])
+AM_CONDITIONAL([ENABLE_PYTHON3_UTS], [test -n "${PYTHON3}"])
+
 
 #
 # Checks for libraries

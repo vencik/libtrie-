@@ -1,3 +1,3 @@
 #!/bin/sh
 
-./struct_test.py 4096 0 24 4
+./struct_test.py 30000 0 24 4 0.3

@@ -43,10 +43,12 @@
 
 #include <algorithm>
 #include <vector>
+#include <map>
 #include <string>
 #include <iostream>
 #include <exception>
 #include <stdexcept>
+#include <regex>
 
 
 /** Print TRIE paths */
@@ -55,40 +57,92 @@ static int trie_paths() {
 
     std::cerr << "TRIE paths BEGIN" << std::endl;
 
-    // Read keys
-    std::vector<std::string> keys;
+    // Read action/value/key input
+    std::vector<std::tuple<char, int, std::string> > input;
 
     for (bool eof = false; !eof; ) {
-        std::string key;
-        std::getline(std::cin, key);
+        std::string line;
+        std::getline(std::cin, line);
+        eof = std::cin.eof();
 
         // Also include last line of a file with missing final EoL
-        eof = std::cin.eof();
-        if (eof && key.empty()) break;
+        if (eof && line.empty()) break;
 
-        // chomp
-        key.erase(
-            std::find_if(key.rbegin(), key.rend(),
-                std::not1(std::ptr_fun<int, int>(std::isspace))
-            ).base(), key.end());
+        // Parse input line
+        static const std::regex line_regex(
+            "^[ \\t]*([AR])[ \\t]+(\\d+)[ \\t]+([^ \\t]*)");
 
-        keys.push_back(key);
+        std::smatch bref;
+        if (!std::regex_match(line, bref, line_regex)) {
+            std::cerr << "Syntax error: '" << line << '\'' << std::endl;
+            throw std::runtime_error("Syntax error");
+        }
+
+        // Value (numeric)
+        int val;
+        std::stringstream val_ss(bref[2]);
+        val_ss >> val;
+
+        input.emplace_back(bref[1].str()[0], val, bref[3]);
     }
 
+    std::cerr << "Creating TRIE..." << std::endl;
+
     // Create TRIE
-    auto key = [&keys](int i) -> const unsigned char * {
-        return (const unsigned char *)keys[i].data();
+    std::map<int, const std::string &> keymap;
+    std::for_each(input.begin(), input.end(),
+    [&keymap](const std::tuple<char, int, std::string> & i) {
+        keymap.emplace(std::get<1>(i), std::get<2>(i));
+    });
+
+    auto _key = [&keymap](int i) -> const std::string & {
+        const auto iter = keymap.find(i);
+        if (keymap.end() == iter)
+            throw std::logic_error(
+                "INTERNAL ERROR: item key not found");
+
+        return iter->second;
     };
 
-    auto key_len = [&keys](int i) -> size_t {
-        return keys[i].size();
+    auto key = [&_key](int i) -> const unsigned char * {
+        return (const unsigned char *)_key(i).data();
+    };
+
+    auto key_len = [&_key](int i) -> size_t {
+        return _key(i).size();
     };
 
     container::trie<int, decltype(key), decltype(key_len)> trie(key, key_len);
 
+    std::cerr << "Building TRIE..." << std::endl;
+
     // Build TRIE structure
-    for (size_t i = 0; i < keys.size(); ++i)
-        trie.insert(i);
+    std::for_each(input.begin(), input.end(),
+    [&trie](const std::tuple<char, int, std::string> & i) {
+        switch (std::get<0>(i)) {
+            // Add new key
+            case 'A':
+                trie.insert(std::get<1>(i));
+                break;
+
+            // Remove key
+            case 'R': {
+                decltype(trie)::iterator iter = trie.find(std::get<1>(i));
+                if (trie.end() == iter) break;  // item not inserted, yet
+
+                trie.erase(iter);
+                break;
+            }
+
+            default:  // unknown action
+                throw std::logic_error(
+                    "INTERNAL ERROR: action not implemented");
+        }
+
+        //std::cerr << trie << std::endl;
+    });
+
+    std::cerr << "TRIE paths:" << std::endl;
 
     // Print TRIE paths
     trie.serialise_paths(std::cout);
@@ -108,10 +162,6 @@ static int main_impl(int argc, char * const argv[]) {
         if (0 != exit_code) break;
 
     } while (0);  // end of pragmatic loop
-
-    std::cerr
-        << "Exit code: " << exit_code
-        << std::endl;
 
     return exit_code;
 }
@@ -134,6 +184,10 @@ int main(int argc, char * const argv[]) {
             << "Unhandled non-standard exception caught"
             << std::endl;
     }
+
+    std::cerr
+        << "Exit code: " << exit_code
+        << std::endl;
 
     return exit_code;
 }

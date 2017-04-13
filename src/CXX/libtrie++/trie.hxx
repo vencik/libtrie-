@@ -135,6 +135,13 @@ class size_of {
  *  \tparam  T         Item type
  *  \tparam  KeyFn     Key getter type
  *  \tparam  KeyLenFn  Key length getter type
+ *
+ *  IMPLEMENTATION NOTES:
+ *  Note that the \c KeyFn and \c KeyLenFn functors are mutable.
+ *  That means that potentially, these functors may keep some variable
+ *  state (not sure if that's necessary, but it seems acceptable and
+ *  solves potential problem with generic functor templates like \c fn_concat,
+ *  which would have to define both const and non-const operator \c () etc).
  */
 template <
     typename T,
@@ -143,8 +150,8 @@ template <
 class trie {
     private:
 
-    KeyFn    m_key_fn;      /**< Key getter        */
-    KeyLenFn m_key_len_fn;  /**< Key length getter */
+    mutable KeyFn    m_key_fn;      /**< Key getter        */
+    mutable KeyLenFn m_key_len_fn;  /**< Key length getter */
 
     typedef std::list<T> items_t;  /**< Item list */
 
@@ -157,28 +164,109 @@ class trie {
         size_t                     qlen;    /**< Key path quad-bit length */
         node *                     parent;  /**< Parent node              */
 
+        typedef uint32_t br_attrs_t;  /**< Type of branch attributes */
+
         /** Branches */
         std::unique_ptr<node> branches[1 << 4];
+        br_attrs_t br_attrs;  /**< Branch attributes */
+
+        /**
+         *  \brief  Branch attributes initialiser
+         *
+         *  Sets node's own branch index and 1st and last branch indices.
+         *  If the 1st son's index is greater than the last, meaning
+         *  that the node is a leaf (it has no children).
+         *
+         *  \param  _br_own   Node's own branch index
+         *  \param  _br_1st   Node's 1st son branch index
+         *  \param  _br_last  Node's last son branch index
+         *
+         *  \return Branch attributes (for constructor)
+         */
+        inline static br_attrs_t br_attrs_init(
+            size_t _br_own,
+            size_t _br_1st,
+            size_t _br_last)
+        {
+            return
+                ((br_attrs_t)_br_own  << 8) |
+                ((br_attrs_t)_br_last << 4) |
+                ((br_attrs_t)_br_1st      );
+        }
 
         /**
          *  \brief  Constructor
          *
-         *  \param  _item    Item
-         *  \param  _key     Item key
-         *  \param  _qlen    Key path quad-bit length
-         *  \param  _parent  Parent node
+         *  With the default values for 1st and last branch indices,
+         *  a leaf node is constructed.
+         *
+         *  \param  _item     Item
+         *  \param  _key      Item key
+         *  \param  _qlen     Key path quad-bit length
+         *  \param  _parent   Parent node
+         *  \param  _br_own   Node's own branch index
+         *  \param  _br_1st   Node's 1st son branch index
+         *  \param  _br_last  Node's last son branch index
          */
         node(
             typename items_t::iterator _item,
             const unsigned char *      _key,
             size_t                     _qlen,
-            node *                     _parent)
+            node *                     _parent,
+            size_t                     _br_own,
+            size_t                     _br_1st  = 1,
+            size_t                     _br_last = 0)
         :
-            item   ( _item   ),
-            key    ( _key    ),
-            qlen   ( _qlen   ),
-            parent ( _parent )
+            item     ( _item   ),
+            key      ( _key    ),
+            qlen     ( _qlen   ),
+            parent   ( _parent ),
+            br_attrs ( br_attrs_init(_br_own, _br_1st, _br_last) )
         {}
+
+        /** First branch index getter */
+        inline size_t br_1st() const { return 0xf & (br_attrs); }
+
+        /** First branch index setter */
+        inline void br_1st(size_t ix) {
+            br_attrs &= ~(br_attrs_t)0xf;
+            br_attrs |= (br_attrs_t)ix;
+        }
+
+        /** Last branch index getter */
+        inline size_t br_last() const { return 0xf & (br_attrs >> 4); }
+
+        /** Last branch index setter */
+        inline void br_last(size_t ix) {
+            br_attrs &= ~(br_attrs_t)0xf0;
+            br_attrs |= (br_attrs_t)ix << 4;
+        }
+
+        /**
+         *  \brief  Set 1st and last branch indices at once
+         *
+         *  \param  ix_1st   1st branch index
+         *  \param  ix_last  Last branch index
+         */
+        inline void br_set(size_t ix_1st, size_t ix_last) {
+            br_attrs &= ~(br_attrs_t)0xff;
+            br_attrs |= ((br_attrs_t)ix_last << 4) | (br_attrs_t)ix_1st;
+        }
+
+        /** Node branch index getter */
+        inline size_t br_own() const { return 0xf & (br_attrs >> 8); }
+
+        /** Node branch index setter */
+        inline void br_own(size_t ix) {
+            br_attrs &= ~(br_attrs_t)0xf00;
+            br_attrs |= (br_attrs_t)ix << 8;
+        }
+
+        /** Node is leaf */
+        inline bool is_leaf() const { return br_1st() > br_last(); }
+
+        /** Node has exactly one child */
+        inline bool has_only_son() const { return br_1st() == br_last(); }
 
     };  // end of struct node
 
@@ -337,9 +425,12 @@ class trie {
         // Create interim branch
         if (NULL != br_node) {
             size_t in_br_ix = get_qpos(br_node->key, qlen);
-            node * in_node  = new node(m_items.end(), br_node->key, qlen, nod);
+            node * in_node  = new node(
+                m_items.end(), br_node->key, qlen, nod,
+                br_ix, in_br_ix, in_br_ix);
 
             in_node->branches[in_br_ix] = std::move(nod->branches[br_ix]);
+            in_node->branches[in_br_ix]->br_own(in_br_ix);
             nod->branches[br_ix].reset(in_node);
             br_node->parent = in_node;
 
@@ -350,13 +441,22 @@ class trie {
             nod   = in_node;
         }
 
-        // Create leaf
+        // Set 1st & last branch indices correctly (leaf has dummy indices)
+        if (nod->is_leaf())
+            nod->br_set(br_ix, br_ix);
+        else {
+            if (nod->br_1st()  > br_ix) nod->br_1st(br_ix);
+            if (nod->br_last() < br_ix) nod->br_last(br_ix);
+        }
+
+        // Create new leaf
         // Note that the key SHAN'T be set, here.
         // The reason is that it may not (and probably won't) reside
         // at the same address after the item is inserted into the item list.
         qlen = len << 1;
-        br_node = new node(m_items.end(), NULL, qlen, nod);
+        br_node = new node(m_items.end(), NULL, qlen, nod, br_ix);
         nod->branches[br_ix].reset(br_node);
+
         return position_t(br_node, qlen, false);
     }
 
@@ -396,50 +496,54 @@ class trie {
     }
 
     /** Iterator base */
-    template <typename NodePtr>
+    template <class Trie, typename Node>
     class iterator_base {
-        friend class trie;
-
         public:
 
-        /** Iterator dereference (tuple of {<key>, <key_size>, <value>}) */
-        typedef std::tuple<const unsigned char *, size_t, T &> deref_t;
+        typedef Trie trie_t;  /**< Base trie type      */
+        typedef Node node_t;  /**< Base trie node type */
 
         protected:
 
-        const trie & m_trie;  /**< Trie         */
-        NodePtr      m_node;  /**< Current node */
+        trie_t & m_trie;  /**< Trie         */
+        node_t * m_node;  /**< Current node */
 
         private:
 
         /** Move to the next valid node */
         void next() {
-            for (size_t br_ix = 0; ;) {
+            const auto items_end = m_trie.m_items.end();
+            size_t br_ix = m_node->br_1st();
+
+            for (;;) {
                 // Descend to depth
-                for (;;) {
-                    NodePtr nod = m_node->branches[br_ix].get();
+                while (br_ix <= m_node->br_last()) {
+                    node_t * nod = m_node->branches[br_ix].get();
+
                     if (NULL != nod) {
                         m_node = nod;
-                        if (m_node->item != m_trie.m_items.end()) return;
+                        if (m_node->item != items_end) return;  // got next
 
-                        br_ix = 0;
+                        // Interim node must have a child
+                        br_ix = m_node->br_1st();
                         continue;
                     }
 
-                    if (!(++br_ix < (1 << 4))) break;  // no more branches
+                    ++br_ix;  // next branch
                 }
 
                 // Ascend from depth
                 do {
-                    const unsigned char * key = m_node->key;
+                    br_ix = m_node->br_own() + 1;
+
                     m_node = m_node->parent;
                     if (NULL == m_node) return;  // end
 
-                    br_ix = get_qpos(key, m_node->qlen);
-
-                } while (!(++br_ix < (1 << 4)));
+                } while (br_ix > m_node->br_last());
             }
         }
+
+        protected:
 
         /**
          *  \brief  Constructor
@@ -449,31 +553,20 @@ class trie {
          *  if necessary.
          *
          *  \param  _trie  Trie
-         *  \param  _node  Initial node
+         *  \param  _node  Initial node (\c NULL means end iterator)
          */
-        iterator_base(const trie & _trie, NodePtr _node):
+        iterator_base(trie_t & _trie, node_t * _node):
             m_trie ( _trie ),
             m_node ( _node )
         {
-            if (m_node->item == m_trie.m_items.end()) next();
+            if (NULL != m_node && m_node->item == m_trie.m_items.end())
+                next();
         }
 
-        /**
-         *  \brief  End constructor
-         *
-         *  \param  _trie  Trie
-         */
-        iterator_base(const trie & _trie): m_trie(_trie), m_node(NULL) {}
+        /** End iterator check */
+        inline bool is_end() const { return NULL == m_node; }
 
         public:
-
-        /** Dereference */
-        inline deref_t operator * () const {
-            return deref_t(m_node->key, m_node->qlen >> 1, *m_node->item);
-        }
-
-        /** Dereference */
-        inline deref_t operator -> () const { return **this; }
 
         /** Pre-incrementation */
         inline iterator_base & operator ++ () {
@@ -482,7 +575,7 @@ class trie {
         }
 
         /** Post-incrementation */
-        inline iterator_base & operator ++ (int) {
+        inline iterator_base operator ++ (int) {
             auto copy = *this;
             ++*this;
             return copy;
@@ -499,6 +592,100 @@ class trie {
         }
 
     };  // end of template class iterator_base
+
+    public:
+
+    /** Forward iterator (forward declaration) */
+    class iterator;
+
+    /** Const forward iterator */
+    class const_iterator: public iterator_base<const trie, const node> {
+        friend class trie;
+
+        public:
+
+        /** Iterator dereference (tuple of {<key>, <key_size>, <value>}) */
+        typedef std::tuple<const unsigned char *, size_t, const T &> deref_t;
+
+        private:
+
+        /** Constructor (see \c iterator_base) */
+        const_iterator(const trie & _trie, const node * _node = NULL):
+            iterator_base<const trie, const node>(_trie, _node)
+        {}
+
+        /** Node getter */
+        const node * get_node() const { return this->m_node; }
+
+        public:
+
+        /** Dereference */
+        inline deref_t operator * () const {
+            return deref_t(
+                this->m_node->key,
+                this->m_node->qlen >> 1,
+                *(this->m_node->item));
+        }
+
+        /** Dereference */
+        inline deref_t operator -> () const { return **this; }
+
+        /**
+         *  \brief  Non-const conversion
+         *
+         *  NOTE: Conversion to non-const iterator casts \c const from
+         *  the \c trie reference and \c trie::node pointer.
+         *  Unless the object is really accessible, using the resulting
+         *  iterator will result in undefined behaviour.
+         */
+        operator iterator() const {
+            return iterator(
+                const_cast<trie &>(this->m_trie),
+                const_cast<node *>(this->m_node));
+        }
+
+    };  // end of class const_iterator
+
+    /** Forward iterator */
+    class iterator: public iterator_base<trie, node> {
+        friend class trie;
+
+        public:
+
+        /** Iterator dereference (tuple of {<key>, <key_size>, <value>}) */
+        typedef std::tuple<const unsigned char *, size_t, T &> deref_t;
+
+        private:
+
+        /** Constructor (see \c iterator_base) */
+        iterator(trie & _trie, node * _node = NULL):
+            iterator_base<trie, node>(_trie, _node)
+        {}
+
+        /** Node getter */
+        node * get_node() const { return this->m_node; }
+
+        public:
+
+        /** Dereference */
+        inline deref_t operator * () const {
+            return deref_t(
+                this->m_node->key,
+                this->m_node->qlen >> 1,
+                *(this->m_node->item));
+        }
+
+        /** Dereference */
+        inline deref_t operator -> () const { return **this; }
+
+        /** Const conversion */
+        operator const_iterator() const {
+            return const_iterator(this->m_trie, this->m_node);
+        }
+
+    };  // end of class iterator
+
+    private:
 
     /**
      *  \brief  Serialise (sub-)tree (implementation)
@@ -517,6 +704,9 @@ class trie {
         out << indent << "Node " << nod << " @"
             << std::dec << nod->qlen << ':' << std::endl
             << indent << "  Parent: " << nod->parent << std::endl
+            << indent << "  Self     @" << nod->br_own() << std::endl
+            << indent << "  1st  son @" << nod->br_1st() << std::endl
+            << indent << "  Last son @" << nod->br_last() << std::endl
             << indent << "  Key: ";
 
         for (size_t i = 0; i < nod->qlen / 2; ++i)
@@ -545,7 +735,13 @@ class trie {
             node * br_node = nod->branches[i].get();
             if (NULL == br_node) continue;
 
-            out << indent << "  Branch " << std::hex << i << ':' << std::endl;
+            static const char * br_ok = "  Branch ";
+            static const char * br_ko = "  FAULTY BRANCH ";
+            const char * br_ind =
+                nod->br_1st() <= i && i <= nod->br_last()
+                ? br_ok : br_ko;
+
+            out << indent << br_ind << std::hex << i << ':' << std::endl;
             serialise(out, iostate, br_node, indent + "    ");
             out << std::endl;
         }
@@ -651,12 +847,6 @@ class trie {
 
     public:
 
-    /** Forward iterator */
-    typedef iterator_base<node *> iterator;
-
-    /** Const forward iterator */
-    typedef iterator_base<const node *> const_iterator;
-
     /**
      *  \brief  Serialise tree
      *
@@ -684,17 +874,17 @@ class trie {
     }
 
     /** Key getter */
-    inline const unsigned char * key(const T & inst) {
+    inline const unsigned char * key(const T & inst) const {
         return m_key_fn(inst);
     }
 
     /** Key length getter */
-    inline size_t key_len(const T & inst) {
+    inline size_t key_len(const T & inst) const {
         return m_key_len_fn(inst);
     }
 
     /** Constructor (default key functors) */
-    trie(): m_root(m_items.end(), NULL, 0, NULL) {}
+    trie(): m_root(m_items.end(), NULL, 0, NULL, 0) {}
 
     /**
      *  \brief  Constructor
@@ -704,7 +894,7 @@ class trie {
      */
     trie(KeyFn key_fn, KeyLenFn key_len_fn):
         m_key_fn(key_fn), m_key_len_fn(key_len_fn),
-        m_root(m_items.end(), NULL, 0, NULL)
+        m_root(m_items.end(), NULL, 0, NULL, 0)
     {}
 
     /** Begin iterator */
@@ -809,6 +999,78 @@ class trie {
         insert_item(item, nod);
 
         return iterator(*this, nod);
+    }
+
+    /**
+     *  \brief  Erase item
+     *
+     *  Increments the iterator.
+     *
+     *  \param  iter  Item iterator
+     */
+    void erase(iterator & iter) {
+        // Check the iterator
+        if (iter.is_end())
+            throw std::logic_error(
+                "libtrie++: attempted erase at end iterator");
+
+        const auto items_end = m_items.end();
+        node * nod = iter.get_node();
+
+        ++iter;  // iterator is incremented
+
+        // Remove item from item list
+        m_items.erase(nod->item);
+        nod->item = items_end;
+
+        // Empty leaf node shall be removed
+        if (nod->is_leaf() && nod != &m_root) {
+            const size_t br_ix  = nod->br_own();
+            node *       parent = nod->parent;
+            parent->branches[br_ix].reset(NULL);
+
+            // Just removed parent's only son
+            if (parent->has_only_son()) parent->br_set(1, 0);
+
+            // There were more than 1 child
+            else {
+                // Removed the 1st son
+                if (parent->br_1st() == br_ix) {
+                    size_t ix = br_ix + 1;
+                    for (; NULL == parent->branches[ix].get(); ++ix);
+                    parent->br_1st(ix);
+                }
+
+                // Removed the last son
+                else if (parent->br_last() == br_ix) {
+                    size_t ix = br_ix - 1;
+                    for (; NULL == parent->branches[ix].get(); --ix);
+                    parent->br_last(ix);
+                }
+            }
+
+            nod = parent;
+        }
+
+        // Interim node with only son shall be removed
+        if (nod->has_only_son() && items_end == nod->item && nod != &m_root) {
+            node * parent = nod->parent;
+            size_t br_ix  = nod->br_own();
+            auto & branch = parent->branches[br_ix];
+            branch = std::move(nod->branches[nod->br_1st()]);
+            branch->parent = parent;
+            branch->br_own(br_ix);
+            nod = parent;
+        }
+
+        // Interim node without value uses key of its descendant (any will do)
+        if (!nod->is_leaf() && items_end == nod->item && nod != &m_root) {
+            const unsigned char * key = nod->branches[nod->br_1st()]->key;
+            while (items_end == nod->item && nod != &m_root) {
+                nod->key = key;
+                nod = nod->parent;
+            }
+        }
     }
 
 };  // end of template class trie

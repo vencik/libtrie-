@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import sys
 
@@ -21,9 +21,9 @@ def str2qbit_str(str):
 
 
 ##
-#  \brief  Build TRIE paths from list of (qkey, value) tuples
+#  \brief  Build TRIE paths from list of (value, qkey) tuples
 #
-#  \param  qkey_vals  List of (qkey, value) tuples
+#  \param  val_qkeys  List of (value, qkey) tuples
 #  \param  index      Current key index
 #  \param  begin      Begin index of (qkey, value) tuple
 #  \param  end        End index (one index too far)
@@ -31,32 +31,32 @@ def str2qbit_str(str):
 #
 #  \return TRIE path list
 #
-def _build_paths(qkey_vals, index, begin, end, node):
+def _build_paths(val_qkeys, index, begin, end, node):
     paths = []
 
     # Keys are sorted, empty must be the 1st one if any
-    if not index < len(qkey_vals[begin][0]):
-        node   = "[" + str(qkey_vals[begin][1]) + "]"  # value node
+    if not index < len(val_qkeys[begin][1]):
+        node   = "[" + str(val_qkeys[begin][0]) + "]"  # value node
         begin += 1
 
     # Divide and conquer
-    for i in xrange(begin + 1, end):
-        if qkey_vals[i][0][index] != qkey_vals[begin][0][index]:
+    for i in range(begin + 1, end):
+        if val_qkeys[i][1][index] != val_qkeys[begin][1][index]:
             if len(node) == 0: node = "[]"  # internal node
 
-            paths += map(
+            paths += list(map(
                 lambda path:
-                    node + "%x" % qkey_vals[begin][0][index] + path,
-                _build_paths(qkey_vals, index + 1, begin, i, ""))
+                    node + "%x" % val_qkeys[begin][1][index] + path,
+                _build_paths(val_qkeys, index + 1, begin, i, "")))
 
             begin = i
 
     # Finish the above (this sub-step might be the only one)
     if begin < end:
-        paths += map(
+        paths += list(map(
             lambda path:
-                node + "%x" % qkey_vals[begin][0][index] + path,
-            _build_paths(qkey_vals, index + 1, begin, end, ""))
+                node + "%x" % val_qkeys[begin][1][index] + path,
+            _build_paths(val_qkeys, index + 1, begin, end, "")))
 
     # End of single path case
     else:
@@ -66,51 +66,48 @@ def _build_paths(qkey_vals, index, begin, end, node):
 
 
 ## See _build_paths
-def build_paths(qkey_vals):
-    if len(qkey_vals) == 0: return ["[]"]
+def build_paths(val_qkeys):
+    if len(val_qkeys) == 0: return ["[]"]
 
-    return _build_paths(qkey_vals, 0, 0, len(qkey_vals), "[]")  # show root node
+    return _build_paths(val_qkeys, 0, 0,
+        len(val_qkeys), "[]")  # show root
 
 
 ##
 #  \brief  Provide TRIE paths for list of (key, value) tuples
 #
-#  \param  key_vals  (key, value) tuples
+#  \param  val_keys  (value, key) tuples
 #
 #  \return List of TRIE (quad-bit) paths
 #
-def key_vals2paths(key_vals):
+def val_keys2paths(val_keys):
     # Sort by keys lexicographically
-    sorted_key_vals = sorted(key_vals, cmp, lambda k_v: k_v[0])
+    sorted_val_keys = sorted(val_keys, key=lambda k_v: k_v[1])
 
     # Keys in qbit strings
-    qbit_key_vals = map(lambda k_v:
-        (str2qbit_str(k_v[0]), k_v[1]), sorted_key_vals)
+    val_qkeys = list(map(lambda v_k:
+        (v_k[0], str2qbit_str(v_k[1])), sorted_val_keys))
 
     # Build paths
-    return build_paths(qbit_key_vals)
+    return build_paths(val_qkeys)
 
 
 ##
-#  \brief  Provide TRIE paths for list of keys
+#  \brief  Main routine
 #
-#  Uses key index as value.
+#  \param  argv  Command line arguments
 #
-#  \param  keys  Key strings
+#  \return Exit code
 #
-#  \return List of TRIE (quad-bit) paths
-#
-def keys2paths(keys):
-    return key_vals2paths(map(lambda no_line: (no_line[1], no_line[0]),
-        enumerate(keys)))
-
-
-#
-# Main
-#
-
-if __name__ == "__main__":
-    paths = keys2paths(sys.stdin.read().splitlines())
+def main(argv):
+    paths = val_keys2paths(
+        list(map(lambda line: line.split(' '),
+            sys.stdin.read().splitlines())))
 
     for path in paths:
         print(path)
+
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
