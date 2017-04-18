@@ -9,7 +9,7 @@ endif
 
 
 SUBDIRS = \
-    libtrie++ \
+    libtriexx \
     unit_test
 
 

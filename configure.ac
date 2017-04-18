@@ -1,7 +1,7 @@
 # C++ Template TRIE Container
 
 AC_PREREQ([2.68])
-AC_INIT([libtrie++], [0.1.0], [vencik@razdva.cz])
+AC_INIT([libtriexx], [0.1.0], [vencik@razdva.cz])
 AM_INIT_AUTOMAKE
 AM_SILENT_RULES([yes])
 LT_INIT
@@ -164,7 +164,7 @@ AC_CONFIG_FILES([
     Makefile
     src/Makefile
     src/CXX/Makefile
-    src/CXX/libtrie++/Makefile
+    src/CXX/libtriexx/Makefile
     src/CXX/unit_test/Makefile
 ])
 AC_OUTPUT

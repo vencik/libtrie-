@@ -39,7 +39,7 @@
  */
 
 
-#include <libtrie++/trie.hxx>
+#include <libtriexx/trie.hxx>
 
 #include <algorithm>
 #include <vector>
