@@ -129,12 +129,20 @@ class size_of {
 }  // end of namespace impl
 
 
+/** TRIE key tracing modes (see \ref trie class documentation) */
+enum {
+    TRIE_KEY_TRACING_STRICT = 0,  /**< Strict TRIE key tracing */
+    TRIE_KEY_TRACING_SLOBBY = 1,  /**< Slobby TRIE key tracing */
+};  // end of enum
+
+
 /**
  *  \brief  TRIE
  *
- *  \tparam  T         Item type
- *  \tparam  KeyFn     Key getter type
- *  \tparam  KeyLenFn  Key length getter type
+ *  \tparam  T           Item type
+ *  \tparam  KeyFn       Key getter type
+ *  \tparam  KeyLenFn    Key length getter type
+ *  \tparam  KeyTracing  Key tracing mode (see below)
  *
  *  IMPLEMENTATION NOTES:
  *  Note that the \c KeyFn and \c KeyLenFn functors are mutable.
@@ -142,11 +150,30 @@ class size_of {
  *  state (not sure if that's necessary, but it seems acceptable and
  *  solves potential problem with generic functor templates like \c fn_concat,
  *  which would have to define both const and non-const operator \c () etc).
+ *
+ *  Also note that the TRIE implements optional "slobby" mode of key tracing.
+ *  If enabled, key tail tracing (last step of the key path from penultimate
+ *  note to leaf) is skipped and the leaf value is produced whether the key
+ *  tail matches or not.
+ *  This mode of operation is designed specifically for the case of using
+ *  the TRIE structure in a hash "table" implementation (keys would be
+ *  the hash strings).
+ *  Using a suitable hashing function, one may assume that if (substantially
+ *  long) prefix of the hash strings matches, the rest of it will likely
+ *  match too.
+ *  Unless perfect hashing is used (collisions are impossible), the item keys
+ *  must be compared, revealing the mismatch eventually, anyway.
+ *  Note that this mode is controlled by a template argument to the class;
+ *  since the extra code is encapsulated in a conditional statement with
+ *  the condition possible to evaluate at compile time, reasonable compilers
+ *  will omit the code altogether if slobby mode isn't used.
+ *  The default is strict key tracing.
  */
 template <
     typename T,
-    class KeyFn    = impl::identity<T>,
-    class KeyLenFn = impl::size_of<T> >
+    class KeyFn      = impl::identity<T>,
+    class KeyLenFn   = impl::size_of<T>,
+    int   KeyTracing = TRIE_KEY_TRACING_STRICT>
 class trie {
     private:
 
@@ -270,7 +297,7 @@ class trie {
 
     };  // end of struct node
 
-    node m_root;   /**< Root node */
+    node m_root;  /**< Root node */
 
     public:
 
@@ -330,15 +357,17 @@ class trie {
      *  \param  miss  Trace miss action
      *  \param  key   Item key
      *  \param  len   Item key length
+     *  \param  slob  Use slobby key tracing (if enabled)
      *
      *  \return Position of the (original) mismatch
      */
     position_t trace(
         trace_miss_t          miss,
         const unsigned char * key,
-        size_t                len)
+        size_t                len,
+        bool                  slob = false)
     const {
-        const node * nod  = &m_root;
+        const node * nod = &m_root;
         size_t qlen = 0;
 
         for (size_t i = 0; i < len; ++i) {
@@ -361,6 +390,12 @@ class trie {
 
                     return (const_cast<trie *>(this)->*miss)(
                         key, len, const_cast<node *>(nod), (i << 1) + qlen);
+                }
+
+                if (TRIE_KEY_TRACING_SLOBBY == KeyTracing && slob &&
+                    nod->is_leaf())
+                {
+                    return position_t(const_cast<node *>(nod), len << 1, true);
                 }
 
                 forward_branch = qlen > 0;  // branch 1/2 a byte ahead
@@ -933,13 +968,15 @@ class trie {
     /**
      *  \brief  Find item by key
      *
+     *  NOTE: Uses slobby key tracing if enabled.
+     *
      *  \param  key  Item key
      *  \param  len  Item key length
      *
      *  \return Item iterator
      */
     const_iterator find(const unsigned char * key, size_t len) const {
-        position_t pos = trace(&trie::search_position, key, len);
+        position_t pos = trace(&trie::search_position, key, len, true);
 
         // Key mismatch
         if (!pos_match(pos)) return end();
@@ -949,6 +986,8 @@ class trie {
 
     /**
      *  \brief  Find item (by its twin)
+     *
+     *  NOTE: Uses slobby key tracing if enabled.
      *
      *  \param  item  Item
      *
@@ -986,18 +1025,24 @@ class trie {
     /**
      *  \brief  Insert item at lower bound
      *
+     *  If item with the key already exists, an exception is thrown.
+     *
      *  \param  item  Item
      *
      *  \return Item iterator
      */
     iterator insert(const T & item, const position_t & pos) {
-        node * nod  = pos_node(pos);
-        size_t qlen = pos_qlen(pos);
+        if (pos_match(pos))
+            throw std::logic_error(
+                "libtrie++: insert to already occupied position");
 
-        position_t item_pos = insert_node(key(item), key_len(item), nod, qlen);
-        nod = pos_node(item_pos);
+        node * nod = pos_node(pos);
+        const size_t qlen = pos_qlen(pos);
+
+        if (qlen != nod->qlen)
+            nod = pos_node(insert_node(key(item), key_len(item), nod, qlen));
+
         insert_item(item, nod);
-
         return iterator(*this, nod);
     }
 
@@ -1156,9 +1201,10 @@ class string_size {
 /**
  *  \brief  String-keyed trie
  *
- *  \tparam  T  Value type
+ *  \tparam  T           Value type
+ *  \tparam  KeyTracing  Key tracing mode
  */
-template <typename T>
+template <typename T, int KeyTracing = TRIE_KEY_TRACING_STRICT>
 class string_trie: public trie<
     std::tuple<std::string, T>,
     impl::fn_concat<
@@ -1166,7 +1212,8 @@ class string_trie: public trie<
         impl::string_data>,
     impl::fn_concat<
         impl::get<0, std::tuple<std::string, T> >,
-        impl::string_size> >
+        impl::string_size>,
+    KeyTracing>
 {};  // end of template class string_trie
 
 }  // end of namespace container
@@ -1174,10 +1221,10 @@ class string_trie: public trie<
 
 // TODO: This should go to io:: namespace or somewhere...
 /** Trie serialisation */
-template <typename T, class KeyFn, class KeyLenFn>
+template <typename T, class KeyFn, class KeyLenFn, int KeyTracing>
 std::ostream & operator << (
     std::ostream & out,
-    const container::trie<T, KeyFn, KeyLenFn> & trie)
+    const container::trie<T, KeyFn, KeyLenFn, KeyTracing> & trie)
 {
     trie.serialise(out);
     return out;

@@ -65,14 +65,14 @@ extern "C" {
  *  \param  out   Output stream
  *  \param  trie  TRIE
  */
-template <typename T, class KeyFn, class KeyLenFn>
+template <typename T, class KeyFn, class KeyLenFn, int KeyTracing>
 static void print_trie(
     std::ostream & out,
-    const container::trie<T, KeyFn, KeyLenFn> & trie)
+    const container::trie<T, KeyFn, KeyLenFn, KeyTracing> & trie)
 {
-    out << "Trie dump:" << std::endl << trie << std::endl;
+    out << "TRIE dump:" << std::endl << trie << std::endl;
 
-    typedef container::trie<T, KeyFn, KeyLenFn> trie_t;
+    typedef container::trie<T, KeyFn, KeyLenFn, KeyTracing> trie_t;
 
     out << "Key -> value pairs in key order:" << std::endl;
     std::for_each(trie.begin(), trie.end(),
@@ -187,6 +187,8 @@ static void result(
 /**
  *  \brief  String-keyed TRIE benchmark
  *
+ *  \tparam  KeyTracing  Key tracing mode
+ *
  *  \param  n              Number of test keys generated
  *  \param  prefix_cnt     Number of common key prefixes generated
  *  \param  prefix_min     Common key prefix minimal length
@@ -195,9 +197,11 @@ static void result(
  *  \param  key_max        Key maximal length
  *  \param  misses_per100  Key search miss percentage (random key used)
  *  \param  lbi_per100     Inserts to lower bound percentage (random key used)
+ *  \param  dump           Dump TRIE after benchmarking
  *
  *  \return Error count
  */
+template <int KeyTracing>
 static int string_trie_benchmark(
     size_t n,
     size_t prefix_cnt,
@@ -206,11 +210,14 @@ static int string_trie_benchmark(
     size_t key_min,
     size_t key_max,
     int    misses_per100,
-    int    lbi_per100)
+    int    lbi_per100,
+    bool   dump)
 {
     int error_cnt = 0;
 
-    std::cerr << "String TRIE benchmark BEGIN" << std::endl;
+    std::cerr
+        << "String TRIE benchmark (key tracing mode "
+        << KeyTracing << ") BEGIN" << std::endl;
 
     // Alphabet
     size_t alphabet_size = 64;
@@ -227,17 +234,21 @@ static int string_trie_benchmark(
     // Key generator
     auto generate_key =
     [&alphabet, &prefixes](size_t min, size_t max) -> std::string {
-        size_t prefix_ix = rand_int(0, prefixes.size() - 1);
-        const std::string & prefix = prefixes[prefix_ix];
+        static const std::string no_prefix("");
+
+        const std::string & prefix = prefixes.size() > 0
+            ? prefixes[rand_int(0, prefixes.size() - 1)]
+            : no_prefix;
+
         return prefix + generate_string(alphabet,
             min < prefix.size() ? 0 : min - prefix.size(),
             max < prefix.size() ? 0 : max - prefix.size());
     };
 
     // Containers
-    std::vector<std::string>    keys; keys.reserve(n);
-    container::string_trie<int> trie;
-    std::map<std::string, int>  map;
+    std::vector<std::string> keys; keys.reserve(n);
+    container::string_trie<int, KeyTracing> trie;
+    std::map<std::string, int> map;
 
     // Insert benchmark
     double trie_time = 0.0;
@@ -251,7 +262,7 @@ static int string_trie_benchmark(
             trie_time -= timestamp();
             auto lb = trie.lower_bound(
                 (const unsigned char *)key.data(), key.size());
-            if (!container::string_trie<int>::pos_match(lb))
+            if (!container::string_trie<int, KeyTracing>::pos_match(lb))
                 trie.insert(std::make_tuple(key, (int)i), lb);
             trie_time += timestamp();
         }
@@ -267,8 +278,6 @@ static int string_trie_benchmark(
     }
 
     result("Insert", n, trie_time, map_time);
-
-    //print_trie(std::cerr, trie);
 
     // Find benchmark
     trie_time = 0.0;
@@ -291,6 +300,8 @@ static int string_trie_benchmark(
 
     result("Search", n, trie_time, map_time);
 
+    if (dump) print_trie(std::cout, trie);
+
     std::cerr << "String TRIE benchmark END" << std::endl;
 
     return error_cnt;
@@ -312,12 +323,14 @@ static int main_impl(int argc, char * const argv[]) {
     size_t key_max       = 256;
     int    misses_per100 = 15;
     int    lbi_per100    = 25;
+    bool   dump          = false;
 
     // Usage
     auto usage = [&argv,
         n, prefix_cnt, prefix_min, prefix_max,
         key_min, key_max,
-        misses_per100, lbi_per100]()
+        misses_per100, lbi_per100,
+        dump]()
     { std::cerr <<
 "Usage: " << argv[0] << " [OPTIONS]\n\n"
 "OPTIONS:\n"
@@ -340,6 +353,8 @@ static int main_impl(int argc, char * const argv[]) {
 "                               default: " << misses_per100 << "\n"
 "    -l, --lbi-per100     <%>   Lower bound inserts (in %)\n"
 "                               default: " << lbi_per100 << "\n"
+"    -d, --dump                 Dump resulting trie to stdout\n"
+"                               default: " << dump << "\n"
 "\n"; };
 
     // Options
@@ -356,6 +371,7 @@ static int main_impl(int argc, char * const argv[]) {
         { "key-max",        required_argument, NULL, 'K' },
         { "misses-per100",  required_argument, NULL, 'm' },
         { "lbi-per100",     required_argument, NULL, 'l' },
+        { "dump",           no_argument,       NULL, 'd' },
 
         //{ "", required|no_argument, NULL, '' },
 
@@ -365,7 +381,7 @@ static int main_impl(int argc, char * const argv[]) {
     for (;;) {
         int long_opt_ix;
         int opt = getopt_long(argc, argv,
-            ":hs:n:c:p:P:k:K:m:l:",
+            ":hs:n:c:p:P:k:K:m:l:d",
             long_opts, &long_opt_ix);
 
         if (-1 == opt) break;  // no more options
@@ -413,6 +429,10 @@ static int main_impl(int argc, char * const argv[]) {
                 lbi_per100 = ::atoi(optarg);
                 break;
 
+            case 'd':  // dump TRIE after benchmark
+                dump = true;
+                break;
+
             case '?':  // unknown option
             case ':':  // missing argument
                 usage();
@@ -431,14 +451,19 @@ static int main_impl(int argc, char * const argv[]) {
     ::srand(rng_seed);
     std::cerr << "RNG seeded with " << rng_seed << std::endl;
 
-    exit_code = string_trie_benchmark(n,
-        prefix_cnt, prefix_min, prefix_max,
+    exit_code = string_trie_benchmark<container::TRIE_KEY_TRACING_STRICT>(
+        n, prefix_cnt, prefix_min, prefix_max,
         key_min, key_max,
-        misses_per100, lbi_per100);
+        misses_per100, lbi_per100,
+        dump);
 
-    std::cerr
-        << "Exit code: " << exit_code
-        << std::endl;
+    if (0 != exit_code) return exit_code;
+
+    exit_code = string_trie_benchmark<container::TRIE_KEY_TRACING_SLOBBY>(
+        n, prefix_cnt, prefix_min, prefix_max,
+        key_min, key_max,
+        misses_per100, lbi_per100,
+        dump);
 
     return exit_code;
 }
@@ -461,6 +486,10 @@ int main(int argc, char * const argv[]) {
             << "Unhandled non-standard exception caught"
             << std::endl;
     }
+
+    std::cerr
+        << "Exit code: " << exit_code
+        << std::endl;
 
     return exit_code;
 }
